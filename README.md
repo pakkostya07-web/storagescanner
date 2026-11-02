@@ -79,7 +79,7 @@ python disk_scanner.py
 ```text
 storagescanner/
 ├── disk_scanner.py      # Основной код программы (GUI на Tkinter + CLI движок)
-├── run_scanner.bat      # Батник для быстрого запуска двойным кликом
+├── run_scanner.bat      # .bat файл для быстрого запуска двойным кликом
 ├── requirements.txt     # Зависимости (matplotlib)
-└── README.md            # Этот файл
+└── README.md
 ```
