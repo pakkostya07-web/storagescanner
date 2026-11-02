@@ -53,8 +53,6 @@ pip install -r requirements.txt
   python disk_scanner.py --cli --path "D:\SteamLibrary"
   ```
 
-## Публикация в GitHub Releases
-
 GitHub (как и браузеры) не позволяет напрямую прикреплять «голые» `.bat` файлы к релизам в целях безопасности.
 
 Для публикации релиза используйте один из двух стандартных способов:
@@ -67,7 +65,7 @@ GitHub (как и браузеры) не позволяет напрямую п�
 python build_release.py
 ```
 
-Скрипт создаст готовый архив **`StorageScanner-v1.0.0.zip`** с исходным кодом и `disk_scanner.pyw`. Этот архив разрешено прикреплять к GitHub Releases.
+Скрипт создаст готовый архив **`StorageScanner-v1.0.0.zip`** с исходным кодом и `disk_scanner.pyw`.
 
 ### Способ 2: Сборка в один автономный `.exe`
 
