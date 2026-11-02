@@ -5,10 +5,29 @@ import math
 import shutil
 import string
 import heapq
+import ctypes
 import threading
 import subprocess
 from pathlib import Path
 from collections import defaultdict
+
+# Включение аппаратного High-DPI масштабирования для четкости интерфейса
+def enable_high_dpi_awareness():
+    """Включает нативную четкость High-DPI в Windows для устранения зернистости и размытия."""
+    if sys.platform == "win32":
+        try:
+            # Per-Monitor V2 DPI awareness (Windows 10 1703+)
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                # System DPI awareness (Windows 8.1 / 10)
+                ctypes.windll.shcore.SetProcessDpiAwareness(1)
+            except Exception:
+                try:
+                    # Windows Vista / 7
+                    ctypes.windll.user32.SetProcessDPIAware()
+                except Exception:
+                    pass
 
 # Настройка безопасной кодировки вывода в консоли Windows
 if sys.platform == "win32":
@@ -26,39 +45,39 @@ WHOLE_COMPUTER_LABEL = "🖥️ Весь компьютер (Все диски)"
 FILE_CATEGORIES = {
     'Видео': {
         'extensions': {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.ts', '.vob', '.3gp'},
-        'color': '#E74C3C'  # Красный
+        'color': '#E53E3E'  # Насыщенный красный
     },
     'Изображения': {
         'extensions': {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico', '.tiff', '.tif', '.raw', '.heic', '.psd', '.ai'},
-        'color': '#1ABC9C'  # Бирюзовый
+        'color': '#319795'  # Бирюзовый
     },
     'Аудио': {
         'extensions': {'.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.wma', '.alac', '.mid', '.midi'},
-        'color': '#3498DB'  # Синий
+        'color': '#3182CE'  # Синий
     },
     'Архивы и образы': {
         'extensions': {'.zip', '.rar', '.7z', '.tar', '.gz', '.iso', '.img', '.bz2', '.xz', '.cab', '.dmg', '.tgz'},
-        'color': '#E67E22'  # Оранжевый
+        'color': '#DD6B20'  # Оранжевый
     },
     'Документы': {
         'extensions': {'.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.txt', '.csv', '.rtf', '.odt', '.ods', '.odp', '.epub', '.fb2', '.djvu', '.md'},
-        'color': '#2ECC71'  # Зеленый
+        'color': '#38A169'  # Зеленый
     },
     'Программы и игры': {
         'extensions': {'.exe', '.msi', '.dll', '.sys', '.bat', '.cmd', '.ps1', '.apk', '.bin', '.appx'},
-        'color': '#F1C40F'  # Желтый
+        'color': '#D69E2E'  # Золотисто-желтый
     },
     'Код и проекты': {
         'extensions': {'.py', '.js', '.ts', '.html', '.css', '.cpp', '.c', '.h', '.hpp', '.java', '.cs', '.go', '.rs', '.php', '.json', '.xml', '.yaml', '.yml', '.sql'},
-        'color': '#9B59B6'  # Фиолетовый
+        'color': '#805AD5'  # Фиолетовый
     },
     'Виртуализация и БД': {
         'extensions': {'.vmdk', '.vdi', '.vhdx', '.qcow2', '.db', '.sqlite', '.sqlite3', '.mdf', '.ldf'},
-        'color': '#34495E'  # Темно-синий
+        'color': '#2D3748'  # Графитовый
     },
     'Другое / Прочее': {
         'extensions': set(),
-        'color': '#95A5A6'  # Серый
+        'color': '#A0AEC0'  # Серый
     }
 }
 
@@ -310,7 +329,6 @@ def generate_svg_report(result: ScanResult, filename: str = "storage_report.svg"
             angle = pct * 360.0
             color = FILE_CATEGORIES.get(cat, {}).get('color', '#95A5A6')
             
-            # Точки дуги
             if angle >= 359.9:
                 svg.append(f'<circle cx="{cx}" cy="{cy}" r="{r_outer}" fill="{color}"/>')
                 svg.append(f'<circle cx="{cx}" cy="{cy}" r="{r_inner}" fill="#F8F9FA"/>')
@@ -335,12 +353,10 @@ def generate_svg_report(result: ScanResult, filename: str = "storage_report.svg"
             current_angle += angle
             legend_items.append((cat, color, sz, pct * 100))
             
-        # Текст в центре
         center_lbl = "Файлов на ПК" if result.is_whole_computer else "Файлов"
         svg.append(f'<text x="{cx}" y="{cy - 8}" text-anchor="middle" font-size="12" fill="#718096">{center_lbl}</text>')
         svg.append(f'<text x="{cx}" y="{cy + 16}" text-anchor="middle" font-size="16" font-weight="bold" fill="#2C3E50">{format_size(result.total_size)}</text>')
         
-        # Легенда категорий снизу
         leg_x, leg_y = 50, 430
         for i, (cat, col, sz, pct) in enumerate(legend_items[:8]):
             lx = leg_x + (i % 2) * 220
@@ -350,10 +366,9 @@ def generate_svg_report(result: ScanResult, filename: str = "storage_report.svg"
     else:
         svg.append(f'<text x="{cx}" y="{cy}" text-anchor="middle" font-size="14" fill="#A0AEC0">Нет данных о файлах</text>')
 
-    # Разделитель колонок
     svg.append(f'<line x1="530" y1="70" x2="530" y2="520" stroke="#E2E8F0" stroke-width="1"/>')
     
-    # 2. Правая колонка: Горизонтальный Bar Chart Топ-10 папок
+    # 2. Правая колонка: Bar Chart
     bar_x = 560
     bar_title = "Топ самых объёмных папок (все диски)" if result.is_whole_computer else "Топ самых объёмных папок"
     svg.append(f'<text x="{bar_x}" y="90" font-size="14" font-weight="bold" fill="#2C3E50">{bar_title}</text>')
@@ -373,11 +388,8 @@ def generate_svg_report(result: ScanResult, filename: str = "storage_report.svg"
             short_name = folder if len(folder) <= 24 else folder[:21] + '...'
             bar_w = max(4, int((sz / max_bytes) * max_bar_w))
             
-            # Подпись папки
             svg.append(f'<text x="{bar_x}" y="{row_y + 13}" font-size="11" fill="#2D3748">{short_name}</text>')
-            # Полоска
             svg.append(f'<rect x="{bar_x + 130}" y="{row_y}" width="{bar_w}" height="18" rx="3" fill="#3182CE"/>')
-            # Размер
             svg.append(f'<text x="{bar_x + 130 + bar_w + 8}" y="{row_y + 14}" font-size="10" font-weight="bold" fill="#2B6CB0">{format_size(sz)}</text>')
             row_y += 38
     else:
@@ -452,7 +464,6 @@ def run_cli_mode(target_paths: list[str], target_label: str = None, save_chart_p
         filename = os.path.basename(filepath)
         print(f"{format_size(sz):<12} | {cat:<16} | {filename} ({filepath})")
 
-    # Генерация векторного SVG графика (не требует matplotlib)
     if not save_chart_path.endswith(".svg"):
         save_chart_path = os.path.splitext(save_chart_path)[0] + ".svg"
         
@@ -463,12 +474,15 @@ def run_cli_mode(target_paths: list[str], target_label: str = None, save_chart_p
 
 
 def run_gui_mode():
-    """Запуск графического интерфейса на чистом Tkinter (без тяжёлых сторонних библиотек)."""
+    """Запуск графического интерфейса с нативной поддержкой High-DPI и быстрым открытием папок."""
+    # Включаем высокую четкость шрифтов до инициализации Tk
+    enable_high_dpi_awareness()
+    
     import tkinter as tk
     from tkinter import ttk, messagebox, filedialog
 
     class NativeChartsCanvas(tk.Canvas):
-        """Интерактивный холст для диаграмм на чистом Tkinter."""
+        """Интерактивный холст для диаграмм на чистом Tkinter высокой чёткости."""
         def __init__(self, master, **kwargs):
             super().__init__(master, bg='#F8F9FA', highlightthickness=0, **kwargs)
             self.result = None
@@ -491,7 +505,7 @@ def run_gui_mode():
                 
             if not self.result or self.result.total_size <= 0:
                 self.create_text(w // 2, h // 2, 
-                                 text="Выберите режим сканирования (диск или весь компьютер) и запустите анализ",
+                                 text="Выберите накопитель или папку и нажмите «Начать сканирование»",
                                  font=('Segoe UI', 11), fill='#718096')
                 return
 
@@ -501,7 +515,7 @@ def run_gui_mode():
             # Разделительная линия
             self.create_line(mid_x, 20, mid_x, h - 20, fill='#E2E8F0', width=1)
 
-            # --- 1. Левая половина: Donut диаграмма категорий ---
+            # 1. Левая половина: Donut диаграмма категорий
             cx = mid_x // 2
             cy = h // 2 - 25
             r_outer = min(cx - 30, cy - 25, 130)
@@ -548,12 +562,11 @@ def run_gui_mode():
                 if ly + 15 < h:
                     self.create_rectangle(lx, ly, lx + 10, ly + 10, fill=col, outline='')
                     self.create_text(lx + 16, ly + 5, text=f"{cat}: {format_size(sz)} ({pct:.0f}%)",
-                                     anchor='w', font=('Segoe UI', 8), fill='#2D3748')
+                                     anchor='w', font=('Segoe UI', 9), fill='#2D3748')
 
-            # Заголовок диаграммы
             self.create_text(cx, 22, text="Распределение по типам файлов", font=('Segoe UI', 11, 'bold'), fill='#2C3E50')
 
-            # --- 2. Правая половина: Топ-10 папок ---
+            # 2. Правая половина: Топ-10 папок
             bar_title = "Топ самых объёмных папок (все диски)" if self.result.is_whole_computer else "Топ самых объёмных папок"
             self.create_text(mid_x + (w - mid_x) // 2, 22, text=bar_title, font=('Segoe UI', 11, 'bold'), fill='#2C3E50')
 
@@ -575,12 +588,9 @@ def run_gui_mode():
                     short_name = folder if len(folder) <= 18 else folder[:15] + '...'
                     bar_w = max(4, int((sz / max_bytes) * max_bar_w))
 
-                    # Имя папки
                     self.create_text(mid_x + 20, cur_y + 8, text=short_name, anchor='w', font=('Segoe UI', 9), fill='#2D3748')
-                    # Полоса
                     self.create_rectangle(mid_x + 130, cur_y, mid_x + 130 + bar_w, cur_y + 16, fill='#3182CE', outline='')
-                    # Значение
-                    self.create_text(mid_x + 130 + bar_w + 6, cur_y + 8, text=format_size(sz), anchor='w', font=('Segoe UI', 8, 'bold'), fill='#2B6CB0')
+                    self.create_text(mid_x + 130 + bar_w + 6, cur_y + 8, text=format_size(sz), anchor='w', font=('Segoe UI', 9, 'bold'), fill='#2B6CB0')
 
     class StorageScannerApp:
         def __init__(self, root):
@@ -632,7 +642,7 @@ def run_gui_mode():
             main_frame = ttk.Frame(self.root, padding="12")
             main_frame.pack(fill=tk.BOTH, expand=True)
 
-            # Верхняя панель
+            # Верхняя панель управления
             top_panel = ttk.LabelFrame(main_frame, text=" 💾 Выбор области сканирования ", padding="10")
             top_panel.pack(fill=tk.X, pady=(0, 10))
 
@@ -658,10 +668,11 @@ def run_gui_mode():
             path_entry = ttk.Entry(path_row, textvariable=self.selected_path_var, font=('Segoe UI', 9))
             path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
 
-            ttk.Button(path_row, text="Обзор папки...", command=self.browse_folder).pack(side=tk.LEFT, padx=3)
+            ttk.Button(path_row, text="Обзор папки...", command=self.browse_folder).pack(side=tk.LEFT, padx=2)
+            ttk.Button(path_row, text="📂 Открыть эту папку", command=self.open_current_selected_path).pack(side=tk.LEFT, padx=2)
             
             self.scan_button = ttk.Button(path_row, text="▶ Начать сканирование", style='Accent.TButton', command=self.toggle_scan)
-            self.scan_button.pack(side=tk.LEFT, padx=6)
+            self.scan_button.pack(side=tk.LEFT, padx=(6, 0))
 
             self.lbl_drive_info = ttk.Label(top_panel, textvariable=self.drive_info_var, style='Status.TLabel')
             self.lbl_drive_info.pack(anchor='w', pady=(4, 0))
@@ -719,6 +730,21 @@ def run_gui_mode():
             if folder:
                 self.selected_path_var.set(folder)
                 self.update_drive_info()
+
+        def open_current_selected_path(self):
+            """Открывает папку или диск, указанный в строке пути."""
+            path = self.selected_path_var.get().strip()
+            if path == WHOLE_COMPUTER_LABEL or path.lower() in ['all', 'весь компьютер']:
+                # Открыть "Этот компьютер"
+                subprocess.Popen('explorer shell:MyComputerFolder')
+                return
+            if os.path.exists(path):
+                try:
+                    os.startfile(path)
+                except Exception as e:
+                    messagebox.showerror("Ошибка", f"Не удалось открыть папку:\n{e}")
+            else:
+                messagebox.showwarning("Внимание", f"Указанный путь не найден:\n{path}")
 
         def update_drive_info(self):
             path = self.selected_path_var.get().strip()
@@ -782,14 +808,19 @@ def run_gui_mode():
                 except Exception as e:
                     messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
 
+        # --- ВКЛАДКА 2: ТОП ПАПОК ---
         def setup_folders_tab(self):
             top_bar = ttk.Frame(self.tab_folders, padding="6")
             top_bar.pack(fill=tk.X)
             
-            ttk.Label(top_bar, text="Самые объёмные папки (нажмите дважды или используйте кнопку для открытия):", style='Header.TLabel').pack(side=tk.LEFT)
+            ttk.Label(top_bar, text="Самые объёмные папки (двойной клик для открытия, ПКМ для меню):", style='Header.TLabel').pack(side=tk.LEFT)
             
+            # Кнопки быстрых действий над папкой
+            btn_drill = ttk.Button(top_bar, text="🔍 Сканировать эту папку глубже", command=self.drill_down_folder)
+            btn_drill.pack(side=tk.RIGHT, padx=4)
+
             btn_open = ttk.Button(top_bar, text="📂 Открыть папку в Проводнике", command=self.open_selected_folder)
-            btn_open.pack(side=tk.RIGHT)
+            btn_open.pack(side=tk.RIGHT, padx=4)
 
             cols = ('name', 'size', 'percent', 'files', 'path')
             self.folders_tree = ttk.Treeview(self.tab_folders, columns=cols, show='headings')
@@ -811,16 +842,59 @@ def run_gui_mode():
             
             self.folders_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(6, 0), pady=6)
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 6), pady=6)
+            
+            # Привязки: двойной клик и контекстное меню
             self.folders_tree.bind("<Double-1>", lambda event: self.open_selected_folder())
+            self.folders_tree.bind("<Button-3>", self.show_folders_context_menu)
 
+            # Контекстное меню
+            self.folders_menu = tk.Menu(self.root, tearoff=0)
+            self.folders_menu.add_command(label="📂 Открыть папку в Проводнике", command=self.open_selected_folder)
+            self.folders_menu.add_command(label="🔍 Сканировать эту папку глубже", command=self.drill_down_folder)
+            self.folders_menu.add_separator()
+            self.folders_menu.add_command(label="📋 Копировать путь к папке", command=self.copy_folder_path)
+
+        def show_folders_context_menu(self, event):
+            row_id = self.folders_tree.identify_row(event.y)
+            if row_id:
+                self.folders_tree.selection_set(row_id)
+                self.folders_menu.post(event.x_root, event.y_root)
+
+        def copy_folder_path(self):
+            selected = self.folders_tree.selection()
+            if not selected:
+                return
+            item = self.folders_tree.item(selected[0])
+            path = item['values'][4]
+            self.root.clipboard_clear()
+            self.root.clipboard_append(path)
+
+        def drill_down_folder(self):
+            """Запускает детальное сканирование выбранной папки."""
+            selected = self.folders_tree.selection()
+            if not selected:
+                return
+            item = self.folders_tree.item(selected[0])
+            folder_path = item['values'][4]
+            if os.path.exists(folder_path):
+                self.selected_path_var.set(folder_path)
+                self.update_drive_info()
+                self.toggle_scan()
+            else:
+                messagebox.showwarning("Внимание", f"Папка не найдена:\n{folder_path}")
+
+        # --- ВКЛАДКА 3: ТОП ФАЙЛОВ ---
         def setup_files_tab(self):
             top_bar = ttk.Frame(self.tab_files, padding="6")
             top_bar.pack(fill=tk.X)
             
-            ttk.Label(top_bar, text="Топ самых больших файлов (основные кандидаты на очистку):", style='Header.TLabel').pack(side=tk.LEFT)
+            ttk.Label(top_bar, text="Топ самых больших файлов (двойной клик открывает содержащую папку):", style='Header.TLabel').pack(side=tk.LEFT)
             
-            btn_open_file = ttk.Button(top_bar, text="🔍 Показать файл в папке", command=self.open_selected_file)
-            btn_open_file.pack(side=tk.RIGHT)
+            btn_select_file = ttk.Button(top_bar, text="🔍 Выделить файл в Проводнике", command=self.open_selected_file)
+            btn_select_file.pack(side=tk.RIGHT, padx=4)
+
+            btn_open_file_dir = ttk.Button(top_bar, text="📁 Открыть папку с файлом", command=self.open_file_directory)
+            btn_open_file_dir.pack(side=tk.RIGHT, padx=4)
 
             filter_bar = ttk.Frame(self.tab_files, padding="6 0 6 6")
             filter_bar.pack(fill=tk.X)
@@ -848,7 +922,32 @@ def run_gui_mode():
             
             self.files_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(6, 0), pady=6)
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 6), pady=6)
-            self.files_tree.bind("<Double-1>", lambda event: self.open_selected_file())
+            
+            # Привязки: двойной клик и контекстное меню
+            self.files_tree.bind("<Double-1>", lambda event: self.open_file_directory())
+            self.files_tree.bind("<Button-3>", self.show_files_context_menu)
+
+            # Контекстное меню для файлов
+            self.files_menu = tk.Menu(self.root, tearoff=0)
+            self.files_menu.add_command(label="📁 Открыть папку с файлом", command=self.open_file_directory)
+            self.files_menu.add_command(label="🔍 Выделить файл в Проводнике", command=self.open_selected_file)
+            self.files_menu.add_separator()
+            self.files_menu.add_command(label="📋 Копировать путь к файлу", command=self.copy_file_path)
+
+        def show_files_context_menu(self, event):
+            row_id = self.files_tree.identify_row(event.y)
+            if row_id:
+                self.files_tree.selection_set(row_id)
+                self.files_menu.post(event.x_root, event.y_root)
+
+        def copy_file_path(self):
+            selected = self.files_tree.selection()
+            if not selected:
+                return
+            item = self.files_tree.item(selected[0])
+            path = item['values'][3]
+            self.root.clipboard_clear()
+            self.root.clipboard_append(path)
 
         def filter_files_tree(self):
             query = self.file_search_var.get().strip().lower()
@@ -891,6 +990,7 @@ def run_gui_mode():
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 6), pady=6)
 
         def open_selected_folder(self):
+            """Открывает выбранную в таблице папку в Проводнике."""
             selected = self.folders_tree.selection()
             if not selected:
                 return
@@ -904,7 +1004,24 @@ def run_gui_mode():
             else:
                 messagebox.showwarning("Внимание", f"Папка не существует или недоступна:\n{folder_path}")
 
+        def open_file_directory(self):
+            """Открывает папку, в которой находится выбранный файл."""
+            selected = self.files_tree.selection()
+            if not selected:
+                return
+            item = self.files_tree.item(selected[0])
+            file_path = item['values'][3]
+            dir_path = os.path.dirname(file_path)
+            if os.path.exists(dir_path):
+                try:
+                    os.startfile(dir_path)
+                except Exception as e:
+                    messagebox.showerror("Ошибка", f"Не удалось открыть папку:\n{e}")
+            else:
+                messagebox.showwarning("Внимание", "Папка файла не найдена.")
+
         def open_selected_file(self):
+            """Выделяет выбранный файл в Проводнике Windows."""
             selected = self.files_tree.selection()
             if not selected:
                 return
@@ -983,7 +1100,7 @@ def run_gui_mode():
             self.cached_files = result.largest_files
             self.folder_paths_map = result.subfolder_full_paths
 
-            # 1. Диаграммы на чистом Canvas
+            # 1. Диаграммы
             self.chart_canvas.set_result(result)
 
             # 2. Папки
