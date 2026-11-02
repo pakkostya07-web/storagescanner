@@ -108,8 +108,14 @@ pyinstaller --onefile --windowed --name StorageScanner disk_scanner.py
 ```text
 storagescanner/
 ├── disk_scanner.py      # Основной код программы (GUI на Tkinter + CLI движок)
+<<<<<<< HEAD
 ├── disk_scanner.pyw     # Запуск GUI без окна терминала (чистый оконный запуск)
 ├── build_release.py     # Скрипт сборки ZIP-релиза для GitHub
 ├── requirements.txt     # Зависимости (matplotlib)
 └── README.md            # Документация проекта
+=======
+├── run_scanner.bat      # .bat файл для быстрого запуска двойным кликом
+├── requirements.txt     # Зависимости (matplotlib)
+└── README.md
+>>>>>>> be608822cb8a7b66bd610fca0f2dadd4833d207f
 ```
