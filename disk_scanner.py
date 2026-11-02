@@ -1,17 +1,14 @@
 import os
 import sys
 import time
+import math
 import shutil
 import string
 import heapq
-import tempfile
 import threading
 import subprocess
 from pathlib import Path
 from collections import defaultdict
-
-# Предотвращаем предупреждения Matplotlib о временном каталоге
-os.environ.setdefault("MPLCONFIGDIR", tempfile.gettempdir())
 
 # Настройка безопасной кодировки вывода в консоли Windows
 if sys.platform == "win32":
@@ -22,15 +19,6 @@ if sys.platform == "win32":
             sys.stderr.reconfigure(encoding='utf-8', errors='replace')
     except Exception:
         pass
-
-import matplotlib
-matplotlib.use('Agg')  # Для CLI или до инициализации Tk
-import matplotlib.pyplot as plt
-
-# Настройка шрифтов для корректного отображения кириллицы
-matplotlib.rcParams['font.sans-serif'] = ['Segoe UI', 'DejaVu Sans', 'Arial', 'sans-serif']
-matplotlib.rcParams['font.family'] = 'sans-serif'
-matplotlib.rcParams['axes.unicode_minus'] = False
 
 WHOLE_COMPUTER_LABEL = "🖥️ Весь компьютер (Все диски)"
 
@@ -287,75 +275,89 @@ def scan_storage(paths: list[str], target_label: str = None, progress_callback=N
     return result
 
 
-def draw_charts_on_figure(fig, result: ScanResult):
-    """Отрисовывает два информативных графика на переданном объекте Figure."""
-    fig.clear()
-    ax1 = fig.add_subplot(1, 2, 1)
-    ax2 = fig.add_subplot(1, 2, 2)
-    fig.subplots_adjust(wspace=0.38, top=0.88, bottom=0.12, left=0.08, right=0.95)
+def generate_svg_report(result: ScanResult, filename: str = "storage_report.svg"):
+    """
+    Генерирует легковесный векторный SVG файл отчета (открывается в любом браузере).
+    Весит всего ~5 КБ и не требует сторонних библиотек.
+    """
+    width = 1100
+    height = 560
+    total_sz = result.total_size if result.total_size > 0 else 1
     
-    total_scanned = result.total_size if result.total_size > 0 else 1
+    svg = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" style="background-color: #F8F9FA; font-family: Segoe UI, sans-serif;">',
+        f'<text x="{width // 2}" y="35" text-anchor="middle" font-size="18" font-weight="bold" fill="#1A365D">Анализ памяти: {result.target_label}</text>',
+        f'<line x1="50" y1="50" x2="{width - 50}" y2="50" stroke="#CBD5E0" stroke-width="1"/>'
+    ]
     
-    # 1. Диаграмма категорий (Donut Chart)
+    # 1. Левая колонка: Круговая диаграмма (SVG Donut)
+    cx, cy = 260, 260
+    r_outer = 130
+    r_inner = 70
+    
     sorted_cats = sorted(
         [(cat, size) for cat, size in result.category_sizes.items() if size > 0],
         key=lambda x: x[1],
         reverse=True
     )
     
+    current_angle = -90.0
+    legend_items = []
+    
     if sorted_cats:
-        labels = [cat for cat, size in sorted_cats]
-        sizes = [size for cat, size in sorted_cats]
-        colors = [FILE_CATEGORIES.get(cat, {}).get('color', '#95A5A6') for cat in labels]
-        
-        # Группируем очень мелкие категории (< 2%) в 'Другие'
-        threshold = 0.02 * total_scanned
-        grouped_labels = []
-        grouped_sizes = []
-        grouped_colors = []
-        other_size = 0
-        
-        for lbl, sz, col in zip(labels, sizes, colors):
-            if sz >= threshold or len(grouped_labels) < 4:
-                grouped_labels.append(lbl)
-                grouped_sizes.append(sz)
-                grouped_colors.append(col)
-            else:
-                other_size += sz
+        for cat, sz in sorted_cats:
+            pct = sz / total_sz
+            angle = pct * 360.0
+            color = FILE_CATEGORIES.get(cat, {}).get('color', '#95A5A6')
+            
+            # Точки дуги
+            if angle >= 359.9:
+                svg.append(f'<circle cx="{cx}" cy="{cy}" r="{r_outer}" fill="{color}"/>')
+                svg.append(f'<circle cx="{cx}" cy="{cy}" r="{r_inner}" fill="#F8F9FA"/>')
+            elif angle > 0.5:
+                rad_start = math.radians(current_angle)
+                rad_end = math.radians(current_angle + angle)
                 
-        if other_size > 0:
-            grouped_labels.append('Прочие (< 2%)')
-            grouped_sizes.append(other_size)
-            grouped_colors.append('#BDC3C7')
+                x1_out = cx + r_outer * math.cos(rad_start)
+                y1_out = cy + r_outer * math.sin(rad_start)
+                x2_out = cx + r_outer * math.cos(rad_end)
+                y2_out = cy + r_outer * math.sin(rad_end)
+                
+                x1_in = cx + r_inner * math.cos(rad_end)
+                y1_in = cy + r_inner * math.sin(rad_end)
+                x2_in = cx + r_inner * math.cos(rad_start)
+                y2_in = cy + r_inner * math.sin(rad_start)
+                
+                large_arc = 1 if angle > 180 else 0
+                path_d = f"M {x1_out} {y1_out} A {r_outer} {r_outer} 0 {large_arc} 1 {x2_out} {y2_out} L {x1_in} {y1_in} A {r_inner} {r_inner} 0 {large_arc} 0 {x2_in} {y2_in} Z"
+                svg.append(f'<path d="{path_d}" fill="{color}" stroke="#F8F9FA" stroke-width="2"/>')
+                
+            current_angle += angle
+            legend_items.append((cat, color, sz, pct * 100))
             
-        wedges, texts, autotexts = ax1.pie(
-            grouped_sizes,
-            labels=grouped_labels,
-            autopct=lambda pct: f'{pct:.1f}%' if pct >= 3.0 else '',
-            pctdistance=0.75,
-            startangle=140,
-            colors=grouped_colors,
-            wedgeprops=dict(width=0.45, edgecolor='white', linewidth=2)
-        )
+        # Текст в центре
+        center_lbl = "Файлов на ПК" if result.is_whole_computer else "Файлов"
+        svg.append(f'<text x="{cx}" y="{cy - 8}" text-anchor="middle" font-size="12" fill="#718096">{center_lbl}</text>')
+        svg.append(f'<text x="{cx}" y="{cy + 16}" text-anchor="middle" font-size="16" font-weight="bold" fill="#2C3E50">{format_size(result.total_size)}</text>')
         
-        for t in texts:
-            t.set_fontsize(9)
-            t.set_color('#2C3E50')
-        for at in autotexts:
-            at.set_fontsize(8)
-            at.set_weight('bold')
-            at.set_color('#FFFFFF')
-            
-        center_title = "Файлов на ПК:\n" if result.is_whole_computer else "Файлов:\n"
-        ax1.text(0, 0, f"{center_title}{format_size(result.total_size)}", 
-                 ha='center', va='center', fontsize=10, weight='bold', color='#2C3E50')
-        ax1.set_title("Распределение по типам файлов", fontsize=12, pad=15, weight='bold', color='#2C3E50')
+        # Легенда категорий снизу
+        leg_x, leg_y = 50, 430
+        for i, (cat, col, sz, pct) in enumerate(legend_items[:8]):
+            lx = leg_x + (i % 2) * 220
+            ly = leg_y + (i // 2) * 26
+            svg.append(f'<rect x="{lx}" y="{ly - 10}" width="12" height="12" rx="3" fill="{col}"/>')
+            svg.append(f'<text x="{lx + 18}" y="{ly}" font-size="11" fill="#2D3748">{cat}: <tspan font-weight="bold">{format_size(sz)}</tspan> ({pct:.1f}%)</text>')
     else:
-        ax1.text(0.5, 0.5, "Нет данных о файлах", ha='center', va='center', color='#7F8C8D')
-        ax1.set_title("Распределение по типам файлов", fontsize=12, pad=15, weight='bold', color='#2C3E50')
-        ax1.axis('off')
+        svg.append(f'<text x="{cx}" y="{cy}" text-anchor="middle" font-size="14" fill="#A0AEC0">Нет данных о файлах</text>')
 
-    # 2. Столбчатая диаграмма Топ-10 папок
+    # Разделитель колонок
+    svg.append(f'<line x1="530" y1="70" x2="530" y2="520" stroke="#E2E8F0" stroke-width="1"/>')
+    
+    # 2. Правая колонка: Горизонтальный Bar Chart Топ-10 папок
+    bar_x = 560
+    bar_title = "Топ самых объёмных папок (все диски)" if result.is_whole_computer else "Топ самых объёмных папок"
+    svg.append(f'<text x="{bar_x}" y="90" font-size="14" font-weight="bold" fill="#2C3E50">{bar_title}</text>')
+    
     sorted_folders = sorted(
         [(folder, size) for folder, size in result.subfolder_sizes.items() if size > 0],
         key=lambda x: x[1],
@@ -363,56 +365,31 @@ def draw_charts_on_figure(fig, result: ScanResult):
     )[:10]
     
     if sorted_folders:
-        sorted_folders.reverse()
-        folder_names = [f[0] if len(f[0]) <= 25 else f[0][:22] + '...' for f in sorted_folders]
-        folder_sizes_bytes = [f[1] for f in sorted_folders]
+        max_bytes = max(f[1] for f in sorted_folders) if sorted_folders else 1
+        max_bar_w = 340
+        row_y = 120
         
-        max_bytes = max(folder_sizes_bytes)
-        if max_bytes >= 1024**3:
-            unit_name = 'ГБ'
-            divider = 1024**3
-        elif max_bytes >= 1024**2:
-            unit_name = 'МБ'
-            divider = 1024**2
-        else:
-            unit_name = 'КБ'
-            divider = 1024
+        for folder, sz in sorted_folders:
+            short_name = folder if len(folder) <= 24 else folder[:21] + '...'
+            bar_w = max(4, int((sz / max_bytes) * max_bar_w))
             
-        vals = [b / divider for b in folder_sizes_bytes]
-        bars = ax2.barh(folder_names, vals, color='#3498DB', edgecolor='none', height=0.65)
-        
-        max_val = max(vals) if vals else 1
-        for bar, b_size in zip(bars, folder_sizes_bytes):
-            w = bar.get_width()
-            ax2.text(w + (max_val * 0.02), bar.get_y() + bar.get_height() / 2,
-                     format_size(b_size),
-                     va='center', ha='left', fontsize=8, color='#34495E', weight='bold')
-                     
-        ax2.set_xlim(0, max_val * 1.28)
-        ax2.set_xlabel(f"Размер ({unit_name})", fontsize=10, color='#2C3E50')
-        chart_title = "Топ самых объёмных папок (все диски)" if result.is_whole_computer else "Топ самых объёмных папок"
-        ax2.set_title(chart_title, fontsize=12, pad=15, weight='bold', color='#2C3E50')
-        ax2.grid(axis='x', linestyle='--', alpha=0.5)
-        ax2.set_axisbelow(True)
-        ax2.spines['top'].set_visible(False)
-        ax2.spines['right'].set_visible(False)
-        ax2.spines['left'].set_color('#BDC3C7')
-        ax2.spines['bottom'].set_color('#BDC3C7')
-        ax2.tick_params(colors='#2C3E50', labelsize=9)
+            # Подпись папки
+            svg.append(f'<text x="{bar_x}" y="{row_y + 13}" font-size="11" fill="#2D3748">{short_name}</text>')
+            # Полоска
+            svg.append(f'<rect x="{bar_x + 130}" y="{row_y}" width="{bar_w}" height="18" rx="3" fill="#3182CE"/>')
+            # Размер
+            svg.append(f'<text x="{bar_x + 130 + bar_w + 8}" y="{row_y + 14}" font-size="10" font-weight="bold" fill="#2B6CB0">{format_size(sz)}</text>')
+            row_y += 38
     else:
-        ax2.text(0.5, 0.5, "Нет подпапок для отображения", ha='center', va='center', color='#7F8C8D')
-        ax2.set_title("Топ самых объёмных папок", fontsize=12, pad=15, weight='bold', color='#2C3E50')
-        ax2.axis('off')
+        svg.append(f'<text x="{bar_x}" y="150" font-size="12" fill="#A0AEC0">Нет подпапок для отображения</text>')
+
+    svg.append('</svg>')
+    
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write("\n".join(svg))
 
 
-def create_charts_figure(result: ScanResult, figsize=(12, 6)):
-    """Создает отдельную фигуру Matplotlib с графиками."""
-    fig = plt.figure(figsize=figsize, facecolor='#F8F9FA')
-    draw_charts_on_figure(fig, result)
-    return fig
-
-
-def run_cli_mode(target_paths: list[str], target_label: str = None, save_chart_path: str = "storage_report.png"):
+def run_cli_mode(target_paths: list[str], target_label: str = None, save_chart_path: str = "storage_report.svg"):
     """Запуск сканера в консольном режиме с выводом информации и сохранением диаграммы."""
     print("=" * 68)
     print("        📊 СКАНЕР НАКОПИТЕЛЕЙ И АНАЛИЗАТОР ПАМЯТИ ПК")
@@ -441,7 +418,6 @@ def run_cli_mode(target_paths: list[str], target_label: str = None, save_chart_p
         print(f"⚠️  Пропущено (ошибки доступа/системные): {result.error_count}")
     print("-" * 68)
     
-    # Сводка по дискам (если сканировался весь компьютер)
     if result.is_whole_computer and result.drive_sizes:
         print("\n💾 ЗАНЯТОЕ МЕСТО ПО ДИСКАМ:")
         print(f"{'Диск':<10} | {'Занято файлов':<16} | {'Файлов'}")
@@ -450,7 +426,6 @@ def run_cli_mode(target_paths: list[str], target_label: str = None, save_chart_p
             cnt = result.drive_file_counts[drv]
             print(f"{drv:<10} | {format_size(sz):<16} | {cnt:,}".replace(',', ' '))
 
-    # 1. Таблица по категориям
     print("\n📊 РАСПРЕДЕЛЕНИЕ ПО ТИПАМ ФАЙЛОВ:")
     print(f"{'Категория':<22} | {'Размер':<12} | {'Файлов':<10} | {'Доля (%)':<8}")
     print("-" * 58)
@@ -461,7 +436,6 @@ def run_cli_mode(target_paths: list[str], target_label: str = None, save_chart_p
         pct = (sz / total_sz) * 100
         print(f"{cat:<22} | {format_size(sz):<12} | {count:<10,} | {pct:>6.2f}%")
         
-    # 2. Топ папок
     print("\n📁 ТОП-10 САМЫХ БОЛЬШИХ ПАПОК:")
     print(f"{'Папка':<35} | {'Размер':<14} | {'Доля (%)':<8}")
     print("-" * 61)
@@ -471,7 +445,6 @@ def run_cli_mode(target_paths: list[str], target_label: str = None, save_chart_p
         short_name = folder if len(folder) <= 35 else folder[:32] + '...'
         print(f"{short_name:<35} | {format_size(sz):<14} | {pct:>6.2f}%")
         
-    # 3. Топ-10 файлов
     print("\n📄 ТОП-10 САМЫХ БОЛЬШИХ ФАЙЛОВ:")
     print(f"{'Размер':<12} | {'Категория':<16} | {'Имя / Путь'}")
     print("-" * 68)
@@ -479,21 +452,135 @@ def run_cli_mode(target_paths: list[str], target_label: str = None, save_chart_p
         filename = os.path.basename(filepath)
         print(f"{format_size(sz):<12} | {cat:<16} | {filename} ({filepath})")
 
-    # 4. Построение и сохранение диаграммы
+    # Генерация векторного SVG графика (не требует matplotlib)
+    if not save_chart_path.endswith(".svg"):
+        save_chart_path = os.path.splitext(save_chart_path)[0] + ".svg"
+        
     print("\n📈 Генерация наглядной диаграммы...")
-    fig = create_charts_figure(result)
-    fig.savefig(save_chart_path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
-    print(f"🎉 Диаграмма успешно сохранена в файл: {os.path.abspath(save_chart_path)}")
+    generate_svg_report(result, filename=save_chart_path)
+    print(f"🎉 Диаграмма успешно сохранена: {os.path.abspath(save_chart_path)}")
     print("=" * 68)
 
 
 def run_gui_mode():
-    """Запуск графического интерфейса с поддержкой Tkinter и встроенным Matplotlib."""
-    matplotlib.use('TkAgg')
-    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    """Запуск графического интерфейса на чистом Tkinter (без тяжёлых сторонних библиотек)."""
     import tkinter as tk
     from tkinter import ttk, messagebox, filedialog
+
+    class NativeChartsCanvas(tk.Canvas):
+        """Интерактивный холст для диаграмм на чистом Tkinter."""
+        def __init__(self, master, **kwargs):
+            super().__init__(master, bg='#F8F9FA', highlightthickness=0, **kwargs)
+            self.result = None
+            self.bind("<Configure>", self.on_resize)
+
+        def set_result(self, result: ScanResult):
+            self.result = result
+            self.redraw()
+
+        def on_resize(self, event):
+            self.redraw()
+
+        def redraw(self):
+            self.delete("all")
+            w = self.winfo_width()
+            h = self.winfo_height()
+            
+            if w < 150 or h < 150:
+                return
+                
+            if not self.result or self.result.total_size <= 0:
+                self.create_text(w // 2, h // 2, 
+                                 text="Выберите режим сканирования (диск или весь компьютер) и запустите анализ",
+                                 font=('Segoe UI', 11), fill='#718096')
+                return
+
+            total_sz = self.result.total_size
+            mid_x = w // 2
+
+            # Разделительная линия
+            self.create_line(mid_x, 20, mid_x, h - 20, fill='#E2E8F0', width=1)
+
+            # --- 1. Левая половина: Donut диаграмма категорий ---
+            cx = mid_x // 2
+            cy = h // 2 - 25
+            r_outer = min(cx - 30, cy - 25, 130)
+            r_outer = max(r_outer, 50)
+            r_inner = int(r_outer * 0.55)
+
+            sorted_cats = sorted(
+                [(cat, sz) for cat, sz in self.result.category_sizes.items() if sz > 0],
+                key=lambda x: x[1],
+                reverse=True
+            )
+
+            current_angle = 90.0
+            legend_items = []
+
+            for cat, sz in sorted_cats:
+                pct = sz / total_sz
+                angle = pct * 360.0
+                color = FILE_CATEGORIES.get(cat, {}).get('color', '#95A5A6')
+
+                if angle > 0.5:
+                    self.create_arc(cx - r_outer, cy - r_outer, cx + r_outer, cy + r_outer,
+                                    start=current_angle, extent=angle,
+                                    fill=color, outline='#F8F9FA', width=2)
+                current_angle += angle
+                legend_items.append((cat, color, sz, pct * 100))
+
+            # Отверстие пончика
+            self.create_oval(cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner,
+                             fill='#F8F9FA', outline='#F8F9FA')
+
+            center_lbl = "Файлов на ПК" if self.result.is_whole_computer else "Файлов"
+            self.create_text(cx, cy - 8, text=center_lbl, font=('Segoe UI', 9), fill='#718096')
+            self.create_text(cx, cy + 12, text=format_size(total_sz), font=('Segoe UI', 11, 'bold'), fill='#2C3E50')
+
+            # Легенда категорий
+            leg_y = cy + r_outer + 20
+            col_w = max(160, cx - 20)
+            for i, (cat, col, sz, pct) in enumerate(legend_items[:6]):
+                col_idx = i % 2
+                row_idx = i // 2
+                lx = 30 + col_idx * (col_w + 10)
+                ly = leg_y + row_idx * 20
+                if ly + 15 < h:
+                    self.create_rectangle(lx, ly, lx + 10, ly + 10, fill=col, outline='')
+                    self.create_text(lx + 16, ly + 5, text=f"{cat}: {format_size(sz)} ({pct:.0f}%)",
+                                     anchor='w', font=('Segoe UI', 8), fill='#2D3748')
+
+            # Заголовок диаграммы
+            self.create_text(cx, 22, text="Распределение по типам файлов", font=('Segoe UI', 11, 'bold'), fill='#2C3E50')
+
+            # --- 2. Правая половина: Топ-10 папок ---
+            bar_title = "Топ самых объёмных папок (все диски)" if self.result.is_whole_computer else "Топ самых объёмных папок"
+            self.create_text(mid_x + (w - mid_x) // 2, 22, text=bar_title, font=('Segoe UI', 11, 'bold'), fill='#2C3E50')
+
+            sorted_folders = sorted(
+                [(folder, sz) for folder, sz in self.result.subfolder_sizes.items() if sz > 0],
+                key=lambda x: x[1],
+                reverse=True
+            )[:10]
+
+            if sorted_folders:
+                max_bytes = max(f[1] for f in sorted_folders) if sorted_folders else 1
+                available_w = (w - mid_x) - 180
+                max_bar_w = max(50, available_w)
+                start_y = 50
+                row_step = min(36, max(24, (h - 70) // 10))
+
+                for i, (folder, sz) in enumerate(sorted_folders):
+                    cur_y = start_y + i * row_step
+                    short_name = folder if len(folder) <= 18 else folder[:15] + '...'
+                    bar_w = max(4, int((sz / max_bytes) * max_bar_w))
+
+                    # Имя папки
+                    self.create_text(mid_x + 20, cur_y + 8, text=short_name, anchor='w', font=('Segoe UI', 9), fill='#2D3748')
+                    # Полоса
+                    self.create_rectangle(mid_x + 130, cur_y, mid_x + 130 + bar_w, cur_y + 16, fill='#3182CE', outline='')
+                    # Значение
+                    self.create_text(mid_x + 130 + bar_w + 6, cur_y + 8, text=format_size(sz), anchor='w', font=('Segoe UI', 8, 'bold'), fill='#2B6CB0')
 
     class StorageScannerApp:
         def __init__(self, root):
@@ -502,7 +589,6 @@ def run_gui_mode():
             self.root.geometry("1180x790")
             self.root.minsize(940, 620)
 
-            # Переменные управления
             self.selected_path_var = tk.StringVar(value=WHOLE_COMPUTER_LABEL)
             self.status_var = tk.StringVar(value="Готов к сканированию. Выберите режим и нажмите «Начать сканирование».")
             self.stats_var = tk.StringVar(value="Файлов: 0 | Папок: 0 | Общий объём: 0 Б")
@@ -513,7 +599,6 @@ def run_gui_mode():
             self.stop_event = threading.Event()
             self.current_result = None
 
-            # Хранение сырых данных для фильтрации и открытия
             self.cached_files = []
             self.folder_paths_map = {}
 
@@ -532,16 +617,13 @@ def run_gui_mode():
             style.configure('Status.TLabel', font=('Segoe UI', 9), foreground='#4A5568')
             
             style.configure('Accent.TButton', font=('Segoe UI', 9, 'bold'), background='#2B6CB0', foreground='white')
-            style.map('Accent.TButton',
-                      background=[('active', '#2C5282'), ('disabled', '#CBD5E0')])
+            style.map('Accent.TButton', background=[('active', '#2C5282'), ('disabled', '#CBD5E0')])
 
             style.configure('AllComputer.TButton', font=('Segoe UI', 9, 'bold'), background='#2F855A', foreground='white')
-            style.map('AllComputer.TButton',
-                      background=[('active', '#276749'), ('disabled', '#CBD5E0')])
+            style.map('AllComputer.TButton', background=[('active', '#276749'), ('disabled', '#CBD5E0')])
                       
             style.configure('Stop.TButton', font=('Segoe UI', 9, 'bold'), background='#E53E3E', foreground='white')
-            style.map('Stop.TButton',
-                      background=[('active', '#C53030'), ('disabled', '#CBD5E0')])
+            style.map('Stop.TButton', background=[('active', '#C53030'), ('disabled', '#CBD5E0')])
 
             style.configure("Treeview.Heading", font=('Segoe UI', 9, 'bold'), background='#EDF2F7')
             style.configure("Treeview", rowheight=24, font=('Segoe UI', 9))
@@ -550,39 +632,25 @@ def run_gui_mode():
             main_frame = ttk.Frame(self.root, padding="12")
             main_frame.pack(fill=tk.BOTH, expand=True)
 
-            # Верхняя панель управления
+            # Верхняя панель
             top_panel = ttk.LabelFrame(main_frame, text=" 💾 Выбор области сканирования ", padding="10")
             top_panel.pack(fill=tk.X, pady=(0, 10))
 
-            # Ряд 1: Кнопки выбора (Весь компьютер + отдельные диски)
             drives_frame = ttk.Frame(top_panel)
             drives_frame.pack(fill=tk.X, pady=(0, 6))
 
             ttk.Label(drives_frame, text="Быстрый выбор:", font=('Segoe UI', 9, 'bold')).pack(side=tk.LEFT, padx=(0, 6))
             
-            # Кнопка «Весь компьютер»
-            btn_all = ttk.Button(
-                drives_frame, 
-                text="🖥️ Весь компьютер (Все диски)",
-                style='AllComputer.TButton',
-                command=self.select_whole_computer
-            )
+            btn_all = ttk.Button(drives_frame, text="🖥️ Весь компьютер (Все диски)", style='AllComputer.TButton', command=self.select_whole_computer)
             btn_all.pack(side=tk.LEFT, padx=(0, 8))
 
-            # Разделитель
             ttk.Separator(drives_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
 
-            # Кнопки доступных накопителей
             drives = get_available_drives()
             for d in drives:
-                btn = ttk.Button(
-                    drives_frame, 
-                    text=f"{d['name']} [{format_size(d['free'])} свободно]",
-                    command=lambda p=d['path']: self.select_quick_drive(p)
-                )
+                btn = ttk.Button(drives_frame, text=f"{d['name']} [{format_size(d['free'])} свободно]", command=lambda p=d['path']: self.select_quick_drive(p))
                 btn.pack(side=tk.LEFT, padx=3)
 
-            # Ряд 2: Ввод пути и кнопки действий
             path_row = ttk.Frame(top_panel)
             path_row.pack(fill=tk.X, pady=4)
 
@@ -592,19 +660,13 @@ def run_gui_mode():
 
             ttk.Button(path_row, text="Обзор папки...", command=self.browse_folder).pack(side=tk.LEFT, padx=3)
             
-            self.scan_button = ttk.Button(
-                path_row, 
-                text="▶ Начать сканирование", 
-                style='Accent.TButton',
-                command=self.toggle_scan
-            )
+            self.scan_button = ttk.Button(path_row, text="▶ Начать сканирование", style='Accent.TButton', command=self.toggle_scan)
             self.scan_button.pack(side=tk.LEFT, padx=6)
 
-            # Ряд 3: Информация о емкости диска или компьютера
             self.lbl_drive_info = ttk.Label(top_panel, textvariable=self.drive_info_var, style='Status.TLabel')
             self.lbl_drive_info.pack(anchor='w', pady=(4, 0))
 
-            # Прогресс и статус
+            # Статус
             status_panel = ttk.Frame(main_frame)
             status_panel.pack(fill=tk.X, pady=(0, 8))
 
@@ -692,57 +754,34 @@ def run_gui_mode():
             except Exception:
                 self.drive_info_var.set("")
 
-        # --- ВКЛАДКА 1: ДИАГРАММЫ ---
         def setup_charts_tab(self):
             top_bar = ttk.Frame(self.tab_charts, padding="6 6 6 0")
             top_bar.pack(fill=tk.X)
             
-            ttk.Label(
-                top_bar, 
-                text="Интерактивные диаграммы распределения памяти (типы файлов и топ папок):", 
-                style='Header.TLabel'
-            ).pack(side=tk.LEFT)
+            ttk.Label(top_bar, text="Наглядные диаграммы распределения дискового пространства:", style='Header.TLabel').pack(side=tk.LEFT)
 
-            self.btn_save_chart = ttk.Button(
-                top_bar, 
-                text="💾 Экспорт графика (PNG)...", 
-                command=self.save_chart_as_image,
-                state='disabled'
-            )
+            self.btn_save_chart = ttk.Button(top_bar, text="💾 Экспорт графика (SVG)...", command=self.save_chart_as_svg, state='disabled')
             self.btn_save_chart.pack(side=tk.RIGHT)
 
-            self.chart_container = ttk.Frame(self.tab_charts)
-            self.chart_container.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+            self.chart_canvas = NativeChartsCanvas(self.tab_charts)
+            self.chart_canvas.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
-            self.fig = plt.figure(figsize=(10, 5), facecolor='#F8F9FA')
-            ax = self.fig.add_subplot(1, 1, 1)
-            ax.text(0.5, 0.5, "Выберите режим сканирования (диск или весь компьютер) и запустите анализ",
-                    ha='center', va='center', fontsize=12, color='#718096')
-            ax.axis('off')
-            
-            self.canvas = FigureCanvasTkAgg(self.fig, master=self.chart_container)
-            self.canvas.draw()
-            self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-        def save_chart_as_image(self):
+        def save_chart_as_svg(self):
             if not self.current_result:
                 return
-            default_name = "storage_report_all_pc.png" if self.current_result.is_whole_computer else "storage_report.png"
+            default_name = "storage_report_all_pc.svg" if self.current_result.is_whole_computer else "storage_report.svg"
             file_path = filedialog.asksaveasfilename(
-                defaultextension=".png",
-                filetypes=[("PNG изображения", "*.png"), ("Все файлы", "*.*")],
+                defaultextension=".svg",
+                filetypes=[("SVG векторные изображения", "*.svg"), ("Все файлы", "*.*")],
                 initialfile=default_name
             )
             if file_path:
                 try:
-                    fig = create_charts_figure(self.current_result)
-                    fig.savefig(file_path, dpi=200, bbox_inches='tight')
-                    plt.close(fig)
-                    messagebox.showinfo("Успешно", f"Диаграмма сохранена в файл:\n{file_path}")
+                    generate_svg_report(self.current_result, filename=file_path)
+                    messagebox.showinfo("Успешно", f"Векторная диаграмма сохранена:\n{file_path}\n(Открывается в любом браузере)")
                 except Exception as e:
                     messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
 
-        # --- ВКЛАДКА 2: ТОП ПАПОК ---
         def setup_folders_tab(self):
             top_bar = ttk.Frame(self.tab_folders, padding="6")
             top_bar.pack(fill=tk.X)
@@ -772,10 +811,8 @@ def run_gui_mode():
             
             self.folders_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(6, 0), pady=6)
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 6), pady=6)
-            
             self.folders_tree.bind("<Double-1>", lambda event: self.open_selected_folder())
 
-        # --- ВКЛАДКА 3: ТОП ФАЙЛОВ ---
         def setup_files_tab(self):
             top_bar = ttk.Frame(self.tab_files, padding="6")
             top_bar.pack(fill=tk.X)
@@ -811,7 +848,6 @@ def run_gui_mode():
             
             self.files_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(6, 0), pady=6)
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 6), pady=6)
-
             self.files_tree.bind("<Double-1>", lambda event: self.open_selected_file())
 
         def filter_files_tree(self):
@@ -829,7 +865,6 @@ def run_gui_mode():
                         filepath
                     ))
 
-        # --- ВКЛАДКА 4: КАТЕГОРИИ ---
         def setup_categories_tab(self):
             top_bar = ttk.Frame(self.tab_categories, padding="6")
             top_bar.pack(fill=tk.X)
@@ -855,7 +890,6 @@ def run_gui_mode():
             self.cat_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(6, 0), pady=6)
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 6), pady=6)
 
-        # Открытие в Проводнике
         def open_selected_folder(self):
             selected = self.folders_tree.selection()
             if not selected:
@@ -884,7 +918,6 @@ def run_gui_mode():
             else:
                 messagebox.showwarning("Внимание", "Файл не найден или был удалён.")
 
-        # Сканирование
         def toggle_scan(self):
             if self.is_scanning:
                 self.stop_event.set()
@@ -892,8 +925,6 @@ def run_gui_mode():
                 self.scan_button.config(state='disabled')
             else:
                 path_str = self.selected_path_var.get().strip()
-                
-                # Проверка: весь компьютер или конкретный путь
                 is_all = (path_str == WHOLE_COMPUTER_LABEL or path_str.lower() in ['all', 'весь компьютер', 'компьютер'])
                 
                 if is_all:
@@ -952,9 +983,8 @@ def run_gui_mode():
             self.cached_files = result.largest_files
             self.folder_paths_map = result.subfolder_full_paths
 
-            # 1. Диаграммы
-            draw_charts_on_figure(self.fig, result)
-            self.canvas.draw()
+            # 1. Диаграммы на чистом Canvas
+            self.chart_canvas.set_result(result)
 
             # 2. Папки
             for item in self.folders_tree.get_children():
@@ -999,11 +1029,11 @@ def run_gui_mode():
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Анализатор дискового пространства и накопителей на Python")
+    parser = argparse.ArgumentParser(description="Анализатор дискового пространства и накопителей на Python (Zero Dependencies)")
     parser.add_argument("--cli", action="store_true", help="Запустить в консольном режиме (без GUI)")
     parser.add_argument("--all", action="store_true", help="Сканировать весь компьютер (все подключенные накопители)")
     parser.add_argument("--path", type=str, default=None, help="Путь для сканирования (папка или диск, например C:\\ или D:\\)")
-    parser.add_argument("--output", type=str, default="storage_report.png", help="Имя файла для сохранения диаграммы в CLI-режиме")
+    parser.add_argument("--output", type=str, default="storage_report.svg", help="Имя файла для сохранения векторной диаграммы (.svg)")
     
     args = parser.parse_args()
 
