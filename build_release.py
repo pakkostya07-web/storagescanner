@@ -1,8 +1,6 @@
 import os
 import sys
 import zipfile
-import shutil
-import subprocess
 
 if sys.platform == "win32":
     try:
@@ -14,8 +12,9 @@ if sys.platform == "win32":
 VERSION = "1.0.0"
 ARCHIVE_NAME = f"StorageScanner-v{VERSION}.zip"
 
-# Файлы, включаемые в релиз
+# Файлы, упаковываемые в релизный ZIP-архив
 RELEASE_FILES = [
+    "run_scanner.bat",
     "disk_scanner.py",
     "disk_scanner.pyw",
     "requirements.txt",
@@ -31,28 +30,10 @@ def make_zip_release():
                 print(f"  + добавлен {fname}")
             else:
                 print(f"  - пропущен (не найден) {fname}")
-    print(f"\n✅ Архив успешно создан: {os.path.abspath(ARCHIVE_NAME)}")
-    print("👉 Этот ZIP-файл можно сразу загружать в GitHub Releases!")
-
-def try_build_exe():
-    try:
-        import PyInstaller
-        print("\n🔨 Найден PyInstaller. Сборка автономного EXE...")
-        cmd = [
-            "pyinstaller",
-            "--noconfirm",
-            "--onedir",
-            "--windowed",
-            "--name", "StorageScanner",
-            "disk_scanner.py"
-        ]
-        subprocess.run(cmd, check=True)
-        print("✅ EXE собран в папке dist/StorageScanner/")
-    except ImportError:
-        print("\n💡 Совет: чтобы собрать автономный .exe файл для релизов:")
-        print("   pip install pyinstaller")
-        print("   pyinstaller --onefile --windowed --name StorageScanner disk_scanner.py")
+                
+    print(f"\n✅ Готово! Архив создан: {os.path.abspath(ARCHIVE_NAME)}")
+    print("👉 Загрузите этот ZIP-архив в раздел GitHub Releases.")
+    print("   Пользователи просто распакуют архив и сразу запустят run_scanner.bat!")
 
 if __name__ == "__main__":
     make_zip_release()
-    try_build_exe()
